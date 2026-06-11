@@ -1,0 +1,782 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Shop {
+  id                       String                   @id
+  shopifyDomain            String                   @unique
+  shopifyShopId            String                   @unique
+  installedAt              DateTime                 @default(now())
+  uninstalledAt            DateTime?
+  planTier                 PlanTier                 @default(TRIAL)
+  timezone                 String                   @default("Asia/Karachi")
+  locale                   String                   @default("en-PK")
+  backfillStatus           BackfillStatus           @default(PENDING)
+  backfillStartedAt        DateTime?
+  backfillCompletedAt      DateTime?
+  backfillOrdersExpected   Int?
+  backfillOrdersProcessed  Int                      @default(0)
+  riskModelState           RiskModelState           @default(BUILDING)
+  riskModelLastTrainedAt   DateTime?
+  riskModelVersion         String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime
+  backfillWindowDays       Int                      @default(30)
+  backfillCompletedThrough DateTime?
+  redactedAt               DateTime?
+  riskScoreBuckets         Json?
+  AuditLog                 AuditLog[]
+  BackfillRun              BackfillRun[]
+  BulkActionRun            BulkActionRun[]
+  CityCorrection           CityCorrection[]
+  CourierSlaRule           CourierSlaRule[]
+  CustomerStats            CustomerStats[]
+  errors                   ErrorLog[]
+  EscalationEmail          EscalationEmail[]
+  LearnedMapping           LearnedMapping[]
+  MLTrainRun               MLTrainRun[]
+  MerchantCourierAccount   MerchantCourierAccount[]
+  Order                    Order[]
+  OrderAction              OrderAction[]
+  Outcome                  Outcome[]
+  RiskScore                RiskScore[]
+  SLABreach                SLABreach[]
+  TrackingEvent            TrackingEvent[]
+  WebhookDelivery          WebhookDelivery[]
+}
+
+model ErrorLog {
+  id          String     @id
+  shopId      String?
+  level       ErrorLevel
+  errorCode   String?
+  source      String
+  message     String
+  stack       String?
+  context     Json?
+  requestId   String?
+  jobId       String?
+  fingerprint String?
+  createdAt   DateTime   @default(now())
+  shop        Shop?      @relation(fields: [shopId], references: [id])
+
+  @@index([createdAt])
+  @@index([errorCode, createdAt])
+  @@index([fingerprint])
+  @@index([shopId, createdAt])
+}
+
+model AuditLog {
+  id         String     @id
+  shopId     String?
+  actor      AuditActor
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime   @default(now())
+  Shop       Shop?      @relation(fields: [shopId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([shopId, action, createdAt])
+}
+
+model BackfillRun {
+  id              String         @id
+  shopId          String
+  startedAt       DateTime       @default(now())
+  completedAt     DateTime?
+  status          BackfillStatus @default(PENDING)
+  daysRequested   Int
+  ordersExpected  Int?
+  ordersProcessed Int            @default(0)
+  ordersFailed    Int            @default(0)
+  cursor          String?
+  errorMessage    String?
+  Shop            Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, status])
+}
+
+model BulkActionFailure {
+  id            String        @id
+  runId         String
+  orderId       String
+  errorCode     String
+  errorMessage  String
+  createdAt     DateTime      @default(now())
+  BulkActionRun BulkActionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+}
+
+model BulkActionRun {
+  id                  String              @id
+  shopId              String
+  actionType          OrderActionType
+  source              OrderActionSource
+  status              BulkActionRunStatus @default(PENDING)
+  target              Json
+  targetSnapshotCount Int
+  ordersAttempted     Int                 @default(0)
+  ordersSucceeded     Int                 @default(0)
+  ordersSkipped       Int                 @default(0)
+  ordersFailed        Int                 @default(0)
+  resumeCursor        Int?
+  errorMessage        String?
+  startedAt           DateTime            @default(now())
+  completedAt         DateTime?
+  BulkActionFailure   BulkActionFailure[]
+  Shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, startedAt(sort: Desc)])
+  @@index([shopId, status])
+}
+
+model CityCorrection {
+  id                     String               @id
+  shopId                 String
+  rawCity                String
+  normalizedCity         String
+  overrideNormalizedCity String?
+  layer                  Int
+  confidence             Float
+  status                 CityCorrectionStatus @default(PENDING)
+  ordersCount            Int                  @default(1)
+  firstSeenAt            DateTime             @default(now())
+  lastSeenAt             DateTime             @default(now())
+  reviewedAt             DateTime?
+  reviewedBy             String?
+  markedForPromotion     Boolean              @default(false)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime
+  Shop                   Shop                 @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, rawCity, normalizedCity, layer])
+  @@index([shopId, status])
+  @@index([shopId, status, ordersCount(sort: Desc)])
+}
+
+model CourierSlaCity {
+  id             String         @id
+  ruleId         String
+  normalizedCity String
+  thresholdDays  Int
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime
+  CourierSlaRule CourierSlaRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@unique([ruleId, normalizedCity])
+  @@index([normalizedCity])
+}
+
+model CourierSlaRule {
+  id                String           @id
+  shopId            String
+  courier           Courier
+  defaultDays       Int
+  emailEnabled      Boolean          @default(false)
+  notificationEmail String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime
+  CourierSlaCity    CourierSlaCity[]
+  Shop              Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, courier])
+  @@index([shopId])
+}
+
+model CustomerStats {
+  id                String    @id
+  shopId            String
+  customerPhoneE164 String
+  shippedCount      Int       @default(0)
+  returnedCount     Int       @default(0)
+  lostCount         Int       @default(0)
+  lastResolvedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime
+  Shop              Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, customerPhoneE164])
+  @@index([shopId, returnedCount])
+}
+
+model EscalationEmail {
+  id                 String              @id
+  shopId             String
+  courier            Courier
+  toAddress          String
+  subject            String
+  body               String
+  templateVersion    String
+  sentAt             DateTime?
+  providerMessageId  String?
+  providerStatus     EmailProviderStatus @default(PENDING)
+  responseReceivedAt DateTime?
+  responseBody       String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime
+  Shop               Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  SLABreach          SLABreach[]
+
+  @@index([shopId, sentAt])
+}
+
+model Fulfillment {
+  id                   String                 @id
+  orderId              String
+  shopifyFulfillmentId String
+  courier              Courier?
+  trackingNumber       String?
+  trackingUrl          String?
+  status               FulfillmentEventStatus
+  shippedAt            DateTime?
+  deliveredAt          DateTime?
+  rawPayload           Json?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime
+  lastPolledAt         DateTime?
+  Order                Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, shopifyFulfillmentId])
+  @@index([trackingNumber])
+}
+
+model LearnedMapping {
+  id             String   @id
+  shopId         String
+  inputRaw       String
+  normalizedCity String
+  normalizedArea String?
+  confidence     Float    @default(1.0)
+  timesAccepted  Int      @default(0)
+  timesRejected  Int      @default(0)
+  lastUsedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+  Shop           Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, inputRaw])
+  @@index([shopId, normalizedCity])
+}
+
+model MLTrainRun {
+  id           String           @id
+  shopId       String
+  runId        String
+  status       MLTrainRunStatus @default(RUNNING)
+  startedAt    DateTime         @default(now())
+  completedAt  DateTime?
+  modelVersion String?
+  errorMessage String?
+  Shop         Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, runId])
+  @@index([shopId, status])
+}
+
+model MerchantCourierAccount {
+  id                   String                       @id
+  shopId               String
+  courier              Courier
+  accountNumber        String
+  encryptedCredentials Bytes?
+  billingAddress       String?
+  contactEmail         String?
+  status               MerchantCourierAccountStatus @default(UNVERIFIED)
+  lastVerifiedAt       DateTime?
+  verificationError    String?
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime
+  Shop                 Shop                         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, courier])
+  @@index([shopId, status])
+}
+
+model Order {
+  id                       String                 @id
+  shopId                   String
+  shopifyOrderId           String
+  shopifyOrderNumber       String
+  customerPhoneE164        String?
+  customerPhoneRaw         String?
+  customerEmail            String?
+  customerShopifyId        String?
+  shippingAddressLine1     String?
+  shippingAddressLine2     String?
+  shippingCity             String?
+  shippingCityNormalized   String?
+  shippingCityConfidence   Float?
+  shippingCityFixerLayer   Int?
+  shippingArea             String?
+  shippingProvince         String?
+  shippingPostalCode       String?
+  shippingCountryCode      String?                @default("PK")
+  totalAmountPaisa         BigInt
+  subtotalAmountPaisa      BigInt
+  discountAmountPaisa      BigInt                 @default(0)
+  shippingAmountPaisa      BigInt                 @default(0)
+  taxAmountPaisa           BigInt                 @default(0)
+  currency                 String                 @default("PKR")
+  itemCount                Int                    @default(0)
+  paymentMethod            PaymentMethod
+  financialStatus          FinancialStatus
+  fulfillmentStatus        FulfillmentStatus
+  placedAt                 DateTime
+  cancelledAt              DateTime?
+  editedAt                 DateTime?
+  shopifyCreatedAt         DateTime
+  shopifyUpdatedAt         DateTime
+  rawPayload               Json?
+  phoneRedactedAt          DateTime?
+  customerRedactedAt       DateTime?
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime
+  lastPayloadHash          String?
+  lastRiskScore            Int?
+  phoneValidation          PhoneValidation?
+  phoneValidationVersion   String?
+  addressClassification    AddressClassification?
+  addressValidation        AddressValidation?
+  addressValidationVersion String?
+  validationDetailJson     Json?
+  Fulfillment              Fulfillment[]
+  Shop                     Shop                   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  OrderAction              OrderAction[]
+  OrderLineItem            OrderLineItem[]
+  Outcome                  Outcome?
+  RiskScore                RiskScore[]
+  SLABreach                SLABreach?
+  TrackingEvent            TrackingEvent[]
+
+  @@unique([shopId, shopifyOrderId])
+  @@index([shopId, addressClassification])
+  @@index([shopId, addressValidation])
+  @@index([shopId, customerPhoneE164])
+  @@index([shopId, financialStatus, fulfillmentStatus])
+  @@index([shopId, lastRiskScore])
+  @@index([shopId, phoneValidation])
+  @@index([shopId, placedAt])
+}
+
+model OrderAction {
+  id                    String                @id
+  orderId               String
+  shopId                String
+  actionType            OrderActionType
+  source                OrderActionSource
+  actorUserId           String?
+  notes                 String?
+  createdAt             DateTime              @default(now())
+  shopifyMutationData   Json?
+  shopifyMutationError  String?
+  shopifyMutationStatus ShopifyMutationStatus @default(PENDING)
+  Order                 Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  Shop                  Shop                  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([shopId, createdAt])
+}
+
+model OrderLineItem {
+  id                String  @id
+  orderId           String
+  shopifyLineItemId String
+  productId         String?
+  variantId         String?
+  sku               String?
+  title             String
+  quantity          Int
+  unitPricePaisa    BigInt
+  totalPricePaisa   BigInt
+  productCategory   String?
+  Order             Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, shopifyLineItemId])
+  @@index([productId])
+}
+
+model Outcome {
+  id              String       @id
+  orderId         String       @unique
+  shopId          String
+  finalStatus     FinalOutcome
+  resolvedAt      DateTime
+  daysToResolve   Int
+  terminalEventId String?
+  createdAt       DateTime     @default(now())
+  Order           Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  Shop            Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, finalStatus, resolvedAt])
+}
+
+model PakistanHoliday {
+  id        String      @id
+  date      DateTime    @db.Date
+  name      String
+  type      HolidayType
+  province  Province?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime
+
+  @@unique([date, type, province])
+  @@index([date])
+}
+
+model PrivacyComplianceLog {
+  id                     String              @id
+  topic                  PrivacyWebhookTopic
+  status                 ComplianceStatus    @default(PENDING)
+  shopifyWebhookId       String              @unique
+  shopId                 String
+  shopifyShopId          String
+  shopDomain             String
+  customerGid            String?
+  customerEmailHmac      String?
+  customerPhoneHmac      String?
+  hmacKeyVersion         Int
+  requestId              String?
+  receivedAt             DateTime            @default(now())
+  startedAt              DateTime?
+  completedAt            DateTime?
+  ordersAnonymized       Int?
+  sessionsDeleted        Int?
+  courierAccountsDeleted Int?
+  failureReason          String?
+  attemptCount           Int                 @default(0)
+
+  @@index([completedAt])
+  @@index([customerEmailHmac])
+  @@index([customerPhoneHmac])
+  @@index([receivedAt])
+  @@index([shopId])
+  @@index([shopifyShopId])
+  @@index([status, startedAt])
+  @@index([topic, status])
+}
+
+model RiskScore {
+  id           String    @id
+  orderId      String
+  shopId       String
+  score        Int
+  modelVersion String
+  modelType    ModelType
+  topFeatures  Json
+  scoredAt     DateTime  @default(now())
+  Order        Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  Shop         Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, modelVersion])
+  @@index([shopId, scoredAt])
+}
+
+model SLABreach {
+  id                 String           @id
+  orderId            String           @unique
+  shopId             String
+  breachedAt         DateTime
+  expectedDeliveryBy DateTime
+  thresholdDays      Int
+  thresholdType      SLAThresholdType
+  daysOverdue        Int
+  state              SLABreachState   @default(DETECTED)
+  merchantNotifiedAt DateTime?
+  escalationEmailId  String?
+  resolvedAt         DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime
+  EscalationEmail    EscalationEmail? @relation(fields: [escalationEmailId], references: [id])
+  Order              Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  Shop               Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, state, breachedAt])
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean?
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model TrackingEvent {
+  id               String                   @id
+  orderId          String
+  shopId           String
+  courier          Courier
+  trackingNumber   String
+  statusRaw        String
+  statusNormalized NormalizedTrackingStatus
+  location         String?
+  eventTimestamp   DateTime
+  recordedAt       DateTime                 @default(now())
+  rawPayload       Json?
+  createdAt        DateTime                 @default(now())
+  Order            Order                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  Shop             Shop                     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, eventTimestamp])
+  @@index([shopId, courier, statusNormalized])
+  @@index([trackingNumber])
+}
+
+model WebhookDelivery {
+  id               String    @id
+  shopId           String?
+  shopifyWebhookId String    @unique
+  topic            String
+  shopDomain       String
+  receivedAt       DateTime  @default(now())
+  processedAt      DateTime?
+  processingError  String?
+  Shop             Shop?     @relation(fields: [shopId], references: [id])
+
+  @@index([shopId, topic, receivedAt])
+}
+
+enum AddressClassification {
+  URBAN
+  RURAL
+  UNKNOWN
+}
+
+enum AddressValidation {
+  COMPLETE
+  INCOMPLETE
+  GARBAGE
+  MISSING
+  AMBIGUOUS_URBAN_RURAL
+}
+
+enum AuditActor {
+  SYSTEM
+  MERCHANT
+  ADMIN
+  AGENT
+}
+
+enum BackfillStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum BulkActionRunStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  PARTIAL
+  FAILED
+}
+
+enum CityCorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_APPROVED
+}
+
+enum ComplianceStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum Courier {
+  TCS
+  LEOPARDS
+  MP
+  OTHER
+  POSTEX
+  TRANZO
+  BLUEX
+  TRAX
+}
+
+enum EmailProviderStatus {
+  PENDING
+  SENT
+  FAILED
+  BOUNCED
+  DEFERRED
+}
+
+enum ErrorLevel {
+  ERROR
+  FATAL
+}
+
+enum FinalOutcome {
+  DELIVERED
+  RETURNED
+  LOST
+}
+
+enum FinancialStatus {
+  PENDING
+  AUTHORIZED
+  PARTIALLY_PAID
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOIDED
+}
+
+enum FulfillmentEventStatus {
+  PENDING
+  OPEN
+  SUCCESS
+  CANCELLED
+  ERROR
+  FAILURE
+}
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  PARTIAL
+  FULFILLED
+  RESTOCKED
+}
+
+enum HolidayType {
+  NATIONAL
+  PROVINCIAL
+}
+
+enum MLTrainRunStatus {
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum MerchantCourierAccountStatus {
+  UNVERIFIED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum ModelType {
+  BASE_GLOBAL
+  PER_SHOP
+  BLENDED
+}
+
+enum NormalizedTrackingStatus {
+  PENDING_PICKUP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  RETURNED
+  LOST
+  EXCEPTION
+}
+
+enum OrderActionSource {
+  DASHBOARD
+  ORDERS_LIST
+  FUTURE_WEBHOOK
+  ORDERS_LIST_BULK
+}
+
+enum OrderActionType {
+  VERIFY
+  HOLD
+  CANCEL
+  SHIP
+}
+
+enum PaymentMethod {
+  COD
+  PREPAID
+  MIXED
+  OTHER
+}
+
+enum PhoneValidation {
+  VALID
+  INVALID_FORMAT
+  INVALID_PATTERN
+  MISSING
+}
+
+enum PlanTier {
+  TRIAL
+  STARTER
+  GROWTH
+  SCALE
+}
+
+enum PrivacyWebhookTopic {
+  CUSTOMERS_DATA_REQUEST
+  CUSTOMERS_REDACT
+  SHOP_REDACT
+}
+
+enum Province {
+  PUNJAB
+  SINDH
+  KPK
+  BALOCHISTAN
+  AJK
+  GB
+  ICT
+}
+
+enum RiskModelState {
+  BUILDING
+  CALIBRATING
+  TRAINED
+}
+
+enum SLABreachState {
+  DETECTED
+  MERCHANT_NOTIFIED
+  ESCALATION_SENT
+  RESPONSE_RECEIVED
+  RESOLVED
+}
+
+enum SLAThresholdType {
+  METRO
+  NON_METRO
+}
+
+enum ShopifyMutationStatus {
+  PENDING
+  SUCCESS
+  USER_ERROR
+  SYSTEM_ERROR
+  SKIPPED
+}
