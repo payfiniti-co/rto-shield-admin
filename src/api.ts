@@ -38,6 +38,15 @@ export interface ErrorLogEntry {
   message: string
   createdAt: string
   shopId: string | null
+  // Debug fields — already returned by the server (findMany has no
+  // `select`, so all ErrorLog scalars come back); declared here so the
+  // CSV export can use them.
+  errorCode: string | null
+  stack: string | null
+  context: unknown
+  requestId: string | null
+  jobId: string | null
+  fingerprint: string | null
   shop: { id: string; shopifyDomain: string } | null
 }
 
